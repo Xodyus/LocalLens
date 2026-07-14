@@ -1,0 +1,17 @@
+# Build output
+build/
+build-*/
+
+# IDE / editor
+.vscode/
+.idea/
+*.user
+CMakeLists.txt.user
+
+# Qt generated
+*.qmlc
+*.jsc
+
+# OS
+Thumbs.db
+.DS_Store
