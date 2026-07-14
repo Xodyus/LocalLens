@@ -12,6 +12,7 @@ qt_standard_project_setup(REQUIRES 6.5)
 qt_add_library(locallens_core STATIC
     src/core/Tokenizer.h src/core/Tokenizer.cpp
     src/core/TextExtractor.h src/core/TextExtractor.cpp
+    src/database/IndexStore.h src/database/IndexStore.cpp
 )
 target_include_directories(locallens_core PUBLIC src)
 target_link_libraries(locallens_core PUBLIC Qt6::Core Qt6::Sql)

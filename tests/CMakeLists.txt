@@ -9,3 +9,4 @@ endfunction()
 
 locallens_add_test(tst_tokenizer)
 locallens_add_test(tst_textextractor)
+locallens_add_test(tst_indexstore)
