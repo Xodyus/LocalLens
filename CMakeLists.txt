@@ -21,6 +21,10 @@ qt_add_executable(locallens
     src/main.cpp
 )
 
+# Qt's generated QML type registration includes headers by bare filename
+# (<AppController.h>), so the ui/ directory itself must be on the include path.
+target_include_directories(locallens PRIVATE src/ui)
+
 # QML files live under src/ui/qml/ on disk but must sit at the module root
 # in the resource system, so alias each one to its bare filename.
 set(LOCALLENS_QML_FILES
@@ -35,6 +39,8 @@ qt_add_qml_module(locallens
     URI LocalLens
     VERSION 1.0
     QML_FILES ${LOCALLENS_QML_FILES}
+    SOURCES
+        src/ui/AppController.h src/ui/AppController.cpp
 )
 
 target_link_libraries(locallens PRIVATE

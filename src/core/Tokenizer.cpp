@@ -33,11 +33,21 @@ QStringList Tokenizer::tokenize(QStringView text) {
         current.clear();
     };
 
-    for (const QChar ch : text) {
-        if (ch.isLetterOrNumber()) {
-            current.append(ch.toLower());
+    // Iterate code points, not UTF-16 code units: characters outside the BMP
+    // (e.g. CJK Extension B ideographs) arrive as surrogate pairs, and QChar's
+    // per-unit classification would silently drop them.
+    const qsizetype size = text.size();
+    for (qsizetype i = 0; i < size; ++i) {
+        char32_t codePoint = text[i].unicode();
+        if (QChar::isHighSurrogate(codePoint) && i + 1 < size && text[i + 1].isLowSurrogate()) {
+            ++i;
+            codePoint = QChar::surrogateToUcs4(static_cast<char16_t>(codePoint),
+                                               text[i].unicode());
+        }
+        if (QChar::isLetterOrNumber(codePoint)) {
+            current.append(QChar::fromUcs4(QChar::toLower(codePoint)));
         } else {
-            flush();
+            flush(); // includes unpaired surrogates, which classify as symbols
         }
     }
     flush();

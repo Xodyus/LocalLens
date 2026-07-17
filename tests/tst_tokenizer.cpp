@@ -23,6 +23,17 @@ private slots:
         QCOMPARE(tokens, QStringList({"café", "zürich", "naïve"}));
     }
 
+    void handlesSupplementaryPlaneCodePoints() {
+        // U+20000/U+20001 are CJK Extension B ideographs: letters outside the
+        // BMP, encoded as surrogate pairs in UTF-16.
+        const QString cjk = QString::fromUcs4(U"\U00020000\U00020001");
+        const auto tokens = Tokenizer::tokenize(QStringLiteral("before %1 after").arg(cjk));
+        QCOMPARE(tokens, QStringList({"before", cjk, "after"}));
+
+        // Emoji are symbols, not letters — they separate tokens.
+        QCOMPARE(Tokenizer::tokenize(u"good\U0001F600bad"), QStringList({"good", "bad"}));
+    }
+
     void keepsDigitsAndAlphanumerics() {
         const auto tokens = Tokenizer::tokenize(u"error 404 in utf8 parser");
         QCOMPARE(tokens, QStringList({"error", "404", "utf8", "parser"}));

@@ -21,6 +21,10 @@ struct SearchHit {
 /// Schema: documents (catalog) / terms (vocabulary) / postings (term_id ->
 /// doc_id with term frequency). Search scores hits with BM25.
 ///
+/// Paths: stored document paths use '/' separators on every platform (what
+/// QDir/QDirIterator produce); removeDocumentsUnder() normalizes native '\'
+/// input, but writers should store '/'-separated paths.
+///
 /// Threading: a QSqlDatabase connection is only valid on the thread that
 /// created it, so construct one IndexStore per thread, each with a unique
 /// connection name, all pointing at the same database file. WAL mode lets
@@ -43,7 +47,8 @@ public:
     bool upsertDocument(const QString& path, qint64 mtimeMs, qint64 sizeBytes,
                         const QHash<QString, int>& termFrequencies);
     bool removeDocument(const QString& path);
-    /// Removes every indexed document whose path starts with `dirPath`.
+    /// Removes every indexed document whose path starts with `dirPath`
+    /// (either separator style accepted).
     bool removeDocumentsUnder(const QString& dirPath);
     /// True if the stored mtime/size differ from the given ones (or the
     /// document is unknown) — used to skip unchanged files cheaply.
@@ -66,6 +71,8 @@ private:
     QSqlDatabase connection() const;
     bool execSchema();
     qint64 termId(const QString& term, bool createIfMissing);
+    /// Drops vocabulary rows that no longer appear in any posting.
+    bool pruneOrphanTerms();
 
     QString m_databasePath;
     QString m_connectionName;

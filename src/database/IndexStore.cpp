@@ -1,6 +1,7 @@
 #include "database/IndexStore.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -199,24 +200,62 @@ bool IndexStore::upsertDocument(const QString& path, qint64 mtimeMs, qint64 size
 }
 
 bool IndexStore::removeDocument(const QString& path) {
-    QSqlQuery query(connection());
+    QSqlDatabase database = connection();
+    Transaction tx(database);
+    if (!tx.begun()) {
+        m_lastError = database.lastError().text();
+        return false;
+    }
+    QSqlQuery query(database);
     query.prepare("DELETE FROM documents WHERE path = ?");
     query.addBindValue(path);
     if (!query.exec()) {
         m_lastError = query.lastError().text();
         return false;
     }
+    if (!pruneOrphanTerms())
+        return false;
+    if (!tx.commit()) {
+        m_lastError = database.lastError().text();
+        return false;
+    }
     return true;
 }
 
 bool IndexStore::removeDocumentsUnder(const QString& dirPath) {
-    QString prefix = dirPath;
+    // Stored paths always use '/' separators; accept native '\' input too.
+    QString prefix = QDir::fromNativeSeparators(dirPath);
     if (!prefix.endsWith('/'))
         prefix += '/';
-    QSqlQuery query(connection());
+
+    QSqlDatabase database = connection();
+    Transaction tx(database);
+    if (!tx.begun()) {
+        m_lastError = database.lastError().text();
+        return false;
+    }
+    QSqlQuery query(database);
     query.prepare("DELETE FROM documents WHERE path LIKE ? ESCAPE '\\'");
     query.addBindValue(escapeLikePrefix(prefix));
     if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    if (!pruneOrphanTerms())
+        return false;
+    if (!tx.commit()) {
+        m_lastError = database.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool IndexStore::pruneOrphanTerms() {
+    // Deleting documents cascades postings away but leaves vocabulary rows
+    // behind; without this, termCount() grows forever.
+    QSqlQuery query(connection());
+    if (!query.exec("DELETE FROM terms WHERE NOT EXISTS ("
+                    "SELECT 1 FROM postings WHERE postings.term_id = terms.id)")) {
         m_lastError = query.lastError().text();
         return false;
     }
@@ -260,17 +299,41 @@ std::vector<SearchHit> IndexStore::search(const QStringList& terms, int limit) c
     };
     QHash<qint64, Accumulator> scores;
 
+    // A term repeated in the query must score (and count) only once.
+    QStringList uniqueTerms = terms;
+    uniqueTerms.removeDuplicates();
+
+    // Resolve each term to its id and document frequency once, then walk its
+    // postings — idf is a per-term constant, so computing df per result row
+    // (as a correlated subquery would) is pure waste.
+    QSqlQuery termQuery(database);
+    termQuery.prepare(
+        "SELECT t.id, COUNT(p.doc_id) FROM terms t "
+        "JOIN postings p ON p.term_id = t.id "
+        "WHERE t.term = ? GROUP BY t.id");
+
     QSqlQuery postings(database);
     postings.prepare(
-        "SELECT p.doc_id, p.frequency, d.token_count,"
-        "       (SELECT COUNT(*) FROM postings WHERE term_id = t.id) AS df "
-        "FROM terms t "
-        "JOIN postings p ON p.term_id = t.id "
+        "SELECT p.doc_id, p.frequency, d.token_count "
+        "FROM postings p "
         "JOIN documents d ON d.id = p.doc_id "
-        "WHERE t.term = ?");
+        "WHERE p.term_id = ?");
 
-    for (const QString& term : terms) {
-        postings.bindValue(0, term);
+    for (const QString& term : uniqueTerms) {
+        termQuery.bindValue(0, term);
+        if (!termQuery.exec()) {
+            m_lastError = termQuery.lastError().text();
+            return hits;
+        }
+        if (!termQuery.next())
+            continue; // term not in the vocabulary
+        const qint64 id = termQuery.value(0).toLongLong();
+        const double df = termQuery.value(1).toDouble();
+
+        // BM25 idf: rewards terms that appear in few documents.
+        const double idf = std::log(1.0 + (totalDocs - df + 0.5) / (df + 0.5));
+
+        postings.bindValue(0, id);
         if (!postings.exec()) {
             m_lastError = postings.lastError().text();
             return hits;
@@ -279,10 +342,8 @@ std::vector<SearchHit> IndexStore::search(const QStringList& terms, int limit) c
             const qint64 docId = postings.value(0).toLongLong();
             const double tf = postings.value(1).toDouble();
             const double docLen = std::max(1.0, postings.value(2).toDouble());
-            const double df = postings.value(3).toDouble();
 
-            // BM25: idf * tf saturation with document-length normalization.
-            const double idf = std::log(1.0 + (totalDocs - df + 0.5) / (df + 0.5));
+            // BM25 tf saturation with document-length normalization.
             const double tfNorm = (tf * (kBm25K1 + 1.0)) /
                                   (tf + kBm25K1 * (1.0 - kBm25B + kBm25B * docLen / avgTokenCount));
 

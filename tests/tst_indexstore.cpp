@@ -115,6 +115,38 @@ private slots:
         QVERIFY(m_store->suggestTerms("_").isEmpty());
     }
 
+    void duplicateQueryTermsScoreOnce() {
+        indexText("/a.txt", "apple pie recipe collection");
+        indexText("/b.txt", "banana bread baking basics");
+
+        const auto once = m_store->search({"apple"});
+        const auto twice = m_store->search({"apple", "apple"});
+        QCOMPARE(twice.size(), once.size());
+        QCOMPARE(twice[0].matchedTerms, 1);
+        QCOMPARE(twice[0].score, once[0].score);
+    }
+
+    void removalsPruneOrphanTerms() {
+        indexText("/a.txt", "unique zebra words");
+        indexText("/b.txt", "shared zebra content");
+        QCOMPARE(m_store->termCount(), 5);
+
+        QVERIFY(m_store->removeDocument("/a.txt"));
+        // "unique" and "words" appeared only in a.txt; the vocabulary keeps
+        // just "shared", "zebra", "content".
+        QCOMPARE(m_store->termCount(), 3);
+    }
+
+    void removeDocumentsUnderAcceptsNativeSeparators() {
+        indexText("C:/docs/a.txt", "sunflower field");
+        indexText("C:/keep/b.txt", "sunflower oil");
+
+        QVERIFY(m_store->removeDocumentsUnder("C:\\docs"));
+        const auto hits = m_store->search({"sunflower"});
+        QCOMPARE(hits.size(), size_t(1));
+        QCOMPARE(hits[0].path, QString("C:/keep/b.txt"));
+    }
+
     void emptySearchReturnsNothing() {
         indexText("/1.txt", "something here");
         QVERIFY(m_store->search({}).empty());

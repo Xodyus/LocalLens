@@ -11,8 +11,9 @@ namespace core {
 ///
 /// Rules: contiguous runs of letters/digits form a token; everything else
 /// (punctuation, whitespace, symbols) is a separator. Tokens are lowercased,
-/// must be 2–64 characters long, and common English stopwords are dropped.
-/// Works on QString code points, so accented/non-Latin text tokenizes correctly.
+/// must be 2–64 UTF-16 code units long, and common English stopwords are
+/// dropped. Iterates full Unicode code points (surrogate pairs included), so
+/// accented, non-Latin, and supplementary-plane text tokenizes correctly.
 class Tokenizer {
 public:
     Tokenizer() = delete; // stateless — use the static functions
