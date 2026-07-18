@@ -13,7 +13,9 @@ qt_add_library(locallens_core STATIC
     src/core/Tokenizer.h src/core/Tokenizer.cpp
     src/core/TextExtractor.h src/core/TextExtractor.cpp
     src/core/TaskQueue.h src/core/TaskQueue.cpp
+    src/core/IndexerWorker.h src/core/IndexerWorker.cpp
     src/database/IndexStore.h src/database/IndexStore.cpp
+    src/watcher/FilesystemWatcher.h src/watcher/FilesystemWatcher.cpp
 )
 target_include_directories(locallens_core PUBLIC src)
 target_link_libraries(locallens_core PUBLIC Qt6::Core Qt6::Sql)
@@ -42,6 +44,7 @@ qt_add_qml_module(locallens
     QML_FILES ${LOCALLENS_QML_FILES}
     SOURCES
         src/ui/AppController.h src/ui/AppController.cpp
+        src/ui/SearchResultModel.h src/ui/SearchResultModel.cpp
 )
 
 target_link_libraries(locallens PRIVATE

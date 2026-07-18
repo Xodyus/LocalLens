@@ -1,13 +1,11 @@
 #include "ui/AppController.h"
 
-#include <QDateTime>
 #include <QDir>
-#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QTimer>
 
-#include "core/TextExtractor.h"
 #include "core/Tokenizer.h"
 
 namespace ui {
@@ -22,12 +20,37 @@ QString databaseFilePath() {
 } // namespace
 
 AppController::AppController(QObject* parent)
-    : QObject(parent), m_store(databaseFilePath(), QStringLiteral("ui-main")) {
+    : QObject(parent),
+      m_store(databaseFilePath(), QStringLiteral("ui-main")),
+      m_results(new SearchResultModel(this)) {
     if (m_store.open())
         setStatus(QStringLiteral("Index ready at %1").arg(databaseFilePath()));
     else
         setStatus(QStringLiteral("Failed to open index: %1").arg(m_store.lastError()));
+
+    m_worker = new core::IndexerWorker(databaseFilePath(), &m_queue,
+                                       QStringLiteral("indexer"), this);
+    connect(m_worker, &core::IndexerWorker::indexChanged, this,
+            &AppController::scheduleMetricsRefresh);
+    connect(m_worker, &core::IndexerWorker::progressMessage, this, &AppController::setStatus);
+    connect(m_worker, &core::IndexerWorker::queueDepthChanged, this, [this](int depth) {
+        if (m_queueDepth != depth) {
+            m_queueDepth = depth;
+            emit queueDepthChanged();
+        }
+    });
+    m_worker->start();
+
+    m_watcher = new watcher::FilesystemWatcher(&m_queue, this);
+
     emit metricsChanged();
+}
+
+AppController::~AppController() {
+    // Wake the worker out of pop() and let it exit before the queue (a
+    // member, destroyed with us) goes away.
+    m_queue.stop();
+    m_worker->wait(5000);
 }
 
 void AppController::search(const QString& query) {
@@ -35,18 +58,17 @@ void AppController::search(const QString& query) {
 
     QElapsedTimer timer;
     timer.start();
-    const std::vector<db::SearchHit> hits = m_store.search(terms);
+    std::vector<db::SearchHit> hits = m_store.search(terms);
     m_lastQueryMs = timer.nsecsElapsed() / 1e6;
 
-    m_results.clear();
-    m_results.reserve(static_cast<qsizetype>(hits.size()));
-    for (const db::SearchHit& hit : hits)
-        m_results.append(hit.path);
-    emit resultsChanged();
+    const auto hitCount = hits.size();
+    m_results->setHits(std::move(hits));
+    emit searchFinished();
 
-    setStatus(QStringLiteral("%1 hit(s) in %2 ms")
-                  .arg(hits.size())
-                  .arg(m_lastQueryMs, 0, 'f', 2));
+    if (!terms.isEmpty())
+        setStatus(QStringLiteral("%1 hit(s) in %2 ms")
+                      .arg(hitCount)
+                      .arg(m_lastQueryMs, 0, 'f', 2));
 }
 
 void AppController::indexFolder(const QUrl& folder) {
@@ -56,44 +78,25 @@ void AppController::indexFolder(const QUrl& folder) {
         return;
     }
 
-    int indexed = 0;
-    int unchanged = 0;
-    int failed = 0;
+    m_watcher->watchTree(root);
+    m_queue.push({core::IndexTask::Kind::Rescan, root});
+    setStatus(QStringLiteral("Watching %1").arg(QDir::toNativeSeparators(root)));
+}
 
-    // QDirIterator yields '/'-separated paths on every platform, which keeps
-    // stored paths consistent with IndexStore::removeDocumentsUnder().
-    QDirIterator it(root, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString path = it.next();
-        if (!core::TextExtractor::supports(path))
-            continue;
+QStringList AppController::suggest(const QString& prefix) {
+    return m_store.suggestTerms(prefix.trimmed());
+}
 
-        const QFileInfo info(path);
-        const qint64 mtimeMs = info.lastModified().toMSecsSinceEpoch();
-        if (!m_store.needsReindex(path, mtimeMs, info.size())) {
-            ++unchanged;
-            continue;
-        }
-
-        const core::TextExtractor::Result extracted = core::TextExtractor::extract(path);
-        if (!extracted.ok) {
-            ++failed;
-            continue;
-        }
-
-        if (m_store.upsertDocument(path, mtimeMs, info.size(),
-                                   core::Tokenizer::termFrequencies(extracted.text)))
-            ++indexed;
-        else
-            ++failed;
-    }
-
-    emit metricsChanged();
-    setStatus(QStringLiteral("Indexed %1 file(s) under %2 (%3 unchanged, %4 failed)")
-                  .arg(indexed)
-                  .arg(root)
-                  .arg(unchanged)
-                  .arg(failed));
+void AppController::scheduleMetricsRefresh() {
+    // The worker fires indexChanged per file; refreshing the UI at most every
+    // 200 ms keeps thousands of rapid signals from thrashing the bindings.
+    if (m_refreshPending)
+        return;
+    m_refreshPending = true;
+    QTimer::singleShot(200, this, [this] {
+        m_refreshPending = false;
+        emit metricsChanged();
+    });
 }
 
 void AppController::setStatus(const QString& status) {

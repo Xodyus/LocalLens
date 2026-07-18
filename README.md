@@ -80,8 +80,9 @@ On Windows with MSYS2/UCRT64 Qt, pass `-DCMAKE_PREFIX_PATH=C:/msys64/ucrt64`.
 - [x] Project scaffold & CMake build
 - [x] Tokenization pipeline
 - [x] SQLite inverted index with term frequencies
-- [ ] Indexer worker thread + thread-safe task queue
+- [x] Indexer worker thread + thread-safe task queue
 - [x] BM25 ranked search
-- [ ] Native filesystem watcher (Win32)
+- [x] Portable filesystem watcher (QFileSystemWatcher backend)
+- [ ] Native filesystem watcher (Win32 `ReadDirectoryChangesW`)
 - [ ] QML dashboard: search, results, live metrics, folder management
 - [ ] PDF text extraction
