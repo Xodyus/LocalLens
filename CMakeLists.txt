@@ -7,6 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql)
 qt_standard_project_setup(REQUIRES 6.5)
 
+# PDF text extraction (TextExtractor). Poppler ships no CMake config, only
+# pkg-config; on MSYS2/UCRT64 install it with
+# `pacman -S mingw-w64-ucrt-x86_64-poppler-qt6`.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Poppler REQUIRED IMPORTED_TARGET poppler-qt6)
+
 # Backend logic (indexing, database, watching) lives in a static library so
 # both the app and the unit tests link against the same code.
 qt_add_library(locallens_core STATIC
@@ -18,7 +24,7 @@ qt_add_library(locallens_core STATIC
     src/watcher/FilesystemWatcher.h src/watcher/FilesystemWatcher.cpp
 )
 target_include_directories(locallens_core PUBLIC src)
-target_link_libraries(locallens_core PUBLIC Qt6::Core Qt6::Sql)
+target_link_libraries(locallens_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql PkgConfig::Poppler)
 
 qt_add_executable(locallens
     src/main.cpp

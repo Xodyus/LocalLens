@@ -7,7 +7,7 @@ namespace core {
 /// Turns a file on disk into plain text ready for tokenization.
 ///
 /// Plain-text formats (.txt, .md, .log, ...) are read directly as UTF-8.
-/// PDF support plugs in here later without touching the indexing pipeline.
+/// PDFs are parsed with Poppler's Qt6 bindings, one page's text at a time.
 class TextExtractor {
 public:
     struct Result {

@@ -63,8 +63,9 @@ tests/          unit tests (Qt Test / ctest)
 
 ## Building
 
-Requires CMake ≥ 3.21, a C++20 compiler, and Qt 6.4+ (Core, Gui, Qml, Quick,
-QuickControls2, Sql).
+Requires CMake ≥ 3.21, a C++20 compiler, Qt 6.4+ (Core, Gui, Qml, Quick,
+QuickControls2, Sql), pkg-config, and Poppler's Qt6 bindings (PDF text
+extraction).
 
 ```sh
 cmake -S . -B build -G Ninja
@@ -73,7 +74,8 @@ ctest --test-dir build        # run unit tests
 ./build/locallens             # launch
 ```
 
-On Windows with MSYS2/UCRT64 Qt, pass `-DCMAKE_PREFIX_PATH=C:/msys64/ucrt64`.
+On Windows with MSYS2/UCRT64 Qt, pass `-DCMAKE_PREFIX_PATH=C:/msys64/ucrt64`
+and first install Poppler: `pacman -S mingw-w64-ucrt-x86_64-poppler-qt6`.
 
 ## Roadmap
 
@@ -84,5 +86,5 @@ On Windows with MSYS2/UCRT64 Qt, pass `-DCMAKE_PREFIX_PATH=C:/msys64/ucrt64`.
 - [x] BM25 ranked search
 - [x] Portable filesystem watcher (QFileSystemWatcher backend)
 - [ ] Native filesystem watcher (Win32 `ReadDirectoryChangesW`)
-- [ ] QML dashboard: search, results, live metrics, folder management
-- [ ] PDF text extraction
+- [x] QML dashboard: search, results, live metrics
+- [x] PDF text extraction (Poppler Qt6 bindings)
