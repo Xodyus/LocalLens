@@ -122,6 +122,8 @@ ApplicationWindow {
             spacing: 6
             model: app.results
 
+            ScrollBar.vertical: ScrollBar {}
+
             delegate: Rectangle {
                 width: ListView.view.width
                 implicitHeight: resultColumn.implicitHeight + 20
