@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFutureWatcher>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -10,22 +11,32 @@
 #include "core/TaskQueue.h"
 #include "database/IndexStore.h"
 #include "ui/SearchResultModel.h"
+
+#ifdef Q_OS_WIN
+#include "watcher/Win32Watcher.h"
+#else
 #include "watcher/FilesystemWatcher.h"
+#endif
 
 namespace ui {
 
+#ifdef Q_OS_WIN
+using ActiveWatcher = watcher::Win32Watcher;
+#else
+using ActiveWatcher = watcher::FilesystemWatcher;
+#endif
+
 /// Bridges the C++ backend to the QML dashboard.
 ///
-/// Threading: the UI thread owns this object, its read connection
-/// (m_store), and the watcher; all indexing happens on the IndexerWorker
-/// thread, fed through the TaskQueue. Worker signals arrive here as queued
-/// connections. Search still runs synchronously on the UI thread —
-/// acceptable while queries are sub-millisecond.
-///
-/// later: async search — run m_store.search on the Qt thread pool
-/// (QtConcurrent::run) with a second read-only IndexStore connection, and
-/// tag each query with a generation counter so a slow older query can't
-/// overwrite a newer one's results.
+/// Threading: the UI thread owns this object and the watcher; all indexing
+/// happens on the IndexerWorker thread, fed through the TaskQueue. Worker
+/// signals arrive here as queued connections. search() itself runs on the Qt
+/// thread pool via QtConcurrent — each call opens its own short-lived
+/// IndexStore connection (QSqlDatabase connections are thread-bound, and
+/// pool threads are reused across calls, so a persistent connection can't be
+/// pinned to "the search thread"). A generation counter, checked in
+/// onSearchFinished(), discards a slow older query's results if a newer
+/// query has already returned.
 class AppController : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -56,7 +67,8 @@ public:
     double lastQueryMs() const { return m_lastQueryMs; }
     QString status() const { return m_status; }
 
-    /// Tokenizes the raw query, runs a BM25 search, and publishes the results.
+    /// Tokenizes the raw query and kicks off an asynchronous BM25 search;
+    /// results land in the `results` model once onSearchFinished() runs.
     Q_INVOKABLE void search(const QString& query);
 
     /// Queues a recursive index of `folder` (a file:// URL from FolderDialog)
@@ -77,15 +89,29 @@ signals:
     void searchFinished();
     void statusChanged();
 
+private slots:
+    void onSearchFinished();
+
 private:
+    /// Result of one background search(); generation lets a stale reply be
+    /// dropped if a newer query has already completed.
+    struct SearchOutcome {
+        std::vector<db::SearchHit> hits;
+        double queryMs = 0.0;
+        quint64 generation = 0;
+    };
+
     void scheduleMetricsRefresh();
     void setStatus(const QString& status);
 
+    QString m_databasePath;
     db::IndexStore m_store;
     core::TaskQueue m_queue;
     core::IndexerWorker* m_worker = nullptr;
-    watcher::FilesystemWatcher* m_watcher = nullptr;
+    ActiveWatcher* m_watcher = nullptr;
     SearchResultModel* m_results = nullptr;
+    QFutureWatcher<SearchOutcome> m_searchWatcher;
+    quint64 m_searchGeneration = 0;
     double m_lastQueryMs = 0.0;
     int m_queueDepth = 0;
     QString m_status;

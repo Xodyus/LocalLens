@@ -19,9 +19,10 @@ namespace watcher {
 /// rescans, which doubles as the debounce for editors that fire several
 /// events per save.
 ///
-/// later: native Win32 backend on ReadDirectoryChangesW behind this same
-/// interface — recursive, per-file events, no per-directory watch handles
-/// (the roadmap item). Keep this class as the fallback.
+/// On Windows, AppController uses Win32Watcher instead (native
+/// ReadDirectoryChangesW, one handle per watched root regardless of
+/// subdirectory count); this class remains the portable fallback for other
+/// platforms, behind the same constructor + watchTree() contract.
 class FilesystemWatcher : public QObject {
     Q_OBJECT
 

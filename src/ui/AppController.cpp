@@ -1,10 +1,13 @@
 #include "ui/AppController.h"
 
+#include <QAtomicInt>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QFuture>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QtConcurrentRun>
 
 #include "core/Tokenizer.h"
 
@@ -21,15 +24,15 @@ QString databaseFilePath() {
 
 AppController::AppController(QObject* parent)
     : QObject(parent),
-      m_store(databaseFilePath(), QStringLiteral("ui-main")),
+      m_databasePath(databaseFilePath()),
+      m_store(m_databasePath, QStringLiteral("ui-main")),
       m_results(new SearchResultModel(this)) {
     if (m_store.open())
-        setStatus(QStringLiteral("Index ready at %1").arg(databaseFilePath()));
+        setStatus(QStringLiteral("Index ready at %1").arg(m_databasePath));
     else
         setStatus(QStringLiteral("Failed to open index: %1").arg(m_store.lastError()));
 
-    m_worker = new core::IndexerWorker(databaseFilePath(), &m_queue,
-                                       QStringLiteral("indexer"), this);
+    m_worker = new core::IndexerWorker(m_databasePath, &m_queue, QStringLiteral("indexer"), this);
     connect(m_worker, &core::IndexerWorker::indexChanged, this,
             &AppController::scheduleMetricsRefresh);
     connect(m_worker, &core::IndexerWorker::progressMessage, this, &AppController::setStatus);
@@ -41,7 +44,15 @@ AppController::AppController(QObject* parent)
     });
     m_worker->start();
 
-    m_watcher = new watcher::FilesystemWatcher(&m_queue, this);
+    // Not QObject-parented: Win32Watcher isn't a QObject (see its header for
+    // why), so both backends are owned and deleted manually for symmetry.
+    m_watcher = new ActiveWatcher(&m_queue);
+#ifdef Q_OS_WIN
+    m_watcher->start();
+#endif
+
+    connect(&m_searchWatcher, &QFutureWatcherBase::finished, this,
+            &AppController::onSearchFinished);
 
     emit metricsChanged();
 }
@@ -51,24 +62,53 @@ AppController::~AppController() {
     // member, destroyed with us) goes away.
     m_queue.stop();
     m_worker->wait(5000);
+    // m_watcher isn't QObject-parented (see its construction), so it isn't
+    // deleted automatically; its own destructor stops its background thread.
+    delete m_watcher;
 }
 
 void AppController::search(const QString& query) {
     const QStringList terms = core::Tokenizer::tokenize(query);
+    const quint64 generation = ++m_searchGeneration;
+    const QString dbPath = m_databasePath;
 
-    QElapsedTimer timer;
-    timer.start();
-    std::vector<db::SearchHit> hits = m_store.search(terms);
-    m_lastQueryMs = timer.nsecsElapsed() / 1e6;
+    QFuture<SearchOutcome> future = QtConcurrent::run([dbPath, terms, generation]() {
+        SearchOutcome outcome;
+        outcome.generation = generation;
 
-    const auto hitCount = hits.size();
-    m_results->setHits(std::move(hits));
+        // Pool threads are reused across calls, so a persistent connection
+        // can't be pinned to "the search thread" — each call opens (and
+        // closes, via IndexStore's destructor) its own, uniquely named so
+        // concurrent searches on different pool threads don't collide.
+        static QAtomicInt connectionCounter;
+        const QString connectionName =
+            QStringLiteral("search-%1").arg(connectionCounter.fetchAndAddRelaxed(1));
+        db::IndexStore store(dbPath, connectionName);
+        if (!store.open())
+            return outcome;
+
+        QElapsedTimer timer;
+        timer.start();
+        outcome.hits = store.search(terms);
+        outcome.queryMs = timer.nsecsElapsed() / 1e6;
+        return outcome;
+    });
+
+    m_searchWatcher.setFuture(future);
+}
+
+void AppController::onSearchFinished() {
+    SearchOutcome outcome = m_searchWatcher.result();
+    if (outcome.generation != m_searchGeneration)
+        return; // superseded by a newer query — drop this stale reply
+
+    const auto hitCount = outcome.hits.size();
+    m_lastQueryMs = outcome.queryMs;
+    m_results->setHits(std::move(outcome.hits));
     emit searchFinished();
 
-    if (!terms.isEmpty())
-        setStatus(QStringLiteral("%1 hit(s) in %2 ms")
-                      .arg(hitCount)
-                      .arg(m_lastQueryMs, 0, 'f', 2));
+    setStatus(
+        QStringLiteral("%1 hit(s) in %2 ms").arg(hitCount).arg(m_lastQueryMs, 0, 'f', 2));
 }
 
 void AppController::indexFolder(const QUrl& folder) {

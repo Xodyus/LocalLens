@@ -85,6 +85,7 @@ and first install Poppler: `pacman -S mingw-w64-ucrt-x86_64-poppler-qt6`.
 - [x] Indexer worker thread + thread-safe task queue
 - [x] BM25 ranked search
 - [x] Portable filesystem watcher (QFileSystemWatcher backend)
-- [ ] Native filesystem watcher (Win32 `ReadDirectoryChangesW`)
+- [x] Native filesystem watcher (Win32 `ReadDirectoryChangesW`)
 - [x] QML dashboard: search, results, live metrics
 - [x] PDF text extraction (Poppler Qt6 bindings)
+- [x] Search on the Qt thread pool (generation-tagged, non-blocking)
