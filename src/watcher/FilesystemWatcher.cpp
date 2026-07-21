@@ -24,6 +24,19 @@ void FilesystemWatcher::addDirectory(const QString& dir) {
         m_watcher.addPath(dir);
 }
 
+void FilesystemWatcher::unwatchTree(const QString& rootDir) {
+    QString prefix = rootDir;
+    if (!prefix.endsWith('/'))
+        prefix += '/';
+    QStringList toRemove;
+    for (const QString& dir : m_watcher.directories()) {
+        if (dir == rootDir || dir.startsWith(prefix))
+            toRemove.append(dir);
+    }
+    if (!toRemove.isEmpty())
+        m_watcher.removePaths(toRemove);
+}
+
 void FilesystemWatcher::onDirectoryChanged(const QString& dir) {
     if (!QFileInfo::exists(dir)) {
         // The directory itself was deleted or renamed away.
@@ -36,11 +49,10 @@ void FilesystemWatcher::onDirectoryChanged(const QString& dir) {
     // addDirectory() dedupes the ones we already track.
     watchTree(dir);
     m_queue->push({core::IndexTask::Kind::Rescan, dir});
-
-    // later: deletion reconciliation — a file deleted from `dir` stays in
-    // the index (Rescan only visits files that exist). Add something like
-    // IndexStore::documentPathsUnder(prefix), diff it against the walk, and
-    // push Remove tasks for paths that are gone.
+    // Rescan only visits files that still exist, so it can't catch a
+    // deletion; ReconcileDir diffs the index against the real directory
+    // listing to find anything that's gone.
+    m_queue->push({core::IndexTask::Kind::ReconcileDir, dir});
 }
 
 } // namespace watcher

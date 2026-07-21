@@ -48,6 +48,9 @@ class AppController : public QObject {
     /// Pending tasks on the indexer queue (0 when idle).
     Q_PROPERTY(int queueDepth READ queueDepth NOTIFY queueDepthChanged)
 
+    /// Folders currently indexed + watched, persisted across restarts.
+    Q_PROPERTY(QStringList watchedFolders READ watchedFolders NOTIFY watchedFoldersChanged)
+
     // Search state.
     Q_PROPERTY(ui::SearchResultModel* results READ results CONSTANT)
     Q_PROPERTY(double lastQueryMs READ lastQueryMs NOTIFY searchFinished)
@@ -63,6 +66,7 @@ public:
     qint64 termCount() const { return m_store.termCount(); }
     qint64 databaseSizeBytes() const { return m_store.databaseSizeBytes(); }
     int queueDepth() const { return m_queueDepth; }
+    QStringList watchedFolders() const { return m_watchedFolders; }
     SearchResultModel* results() const { return m_results; }
     double lastQueryMs() const { return m_lastQueryMs; }
     QString status() const { return m_status; }
@@ -72,20 +76,25 @@ public:
     Q_INVOKABLE void search(const QString& query);
 
     /// Queues a recursive index of `folder` (a file:// URL from FolderDialog)
-    /// on the worker thread and starts watching it for changes.
-    ///
-    /// later: folder management — keep a watchedFolders list property,
-    /// persist it with QSettings, restore + re-scan on startup, and add
-    /// removeFolder() that pushes a RemoveDir task and stops the watch.
+    /// on the worker thread and starts watching it for changes. Persisted,
+    /// so it's restored and re-scanned on the next launch.
     Q_INVOKABLE void indexFolder(const QUrl& folder);
+
+    /// Stops watching `folder` and removes its documents from the index.
+    Q_INVOKABLE void removeFolder(const QString& folder);
 
     /// Autocomplete: index terms starting with `prefix`, most widespread
     /// first. Synchronous — a LIKE 'x%' on an indexed column is fast.
     Q_INVOKABLE QStringList suggest(const QString& prefix);
 
+    /// Opens `path`'s containing folder in the OS file browser with the file
+    /// pre-selected (Windows Explorer's "/select," convention).
+    Q_INVOKABLE void revealInExplorer(const QString& path) const;
+
 signals:
     void metricsChanged();
     void queueDepthChanged();
+    void watchedFoldersChanged();
     void searchFinished();
     void statusChanged();
 
@@ -97,10 +106,13 @@ private:
     /// dropped if a newer query has already completed.
     struct SearchOutcome {
         std::vector<db::SearchHit> hits;
+        QStringList snippets; // aligned with hits by index
         double queryMs = 0.0;
         quint64 generation = 0;
     };
 
+    void addWatchedFolder(const QString& root);
+    void saveWatchedFolders();
     void scheduleMetricsRefresh();
     void setStatus(const QString& status);
 
@@ -109,6 +121,7 @@ private:
     core::TaskQueue m_queue;
     core::IndexerWorker* m_worker = nullptr;
     ActiveWatcher* m_watcher = nullptr;
+    QStringList m_watchedFolders;
     SearchResultModel* m_results = nullptr;
     QFutureWatcher<SearchOutcome> m_searchWatcher;
     quint64 m_searchGeneration = 0;

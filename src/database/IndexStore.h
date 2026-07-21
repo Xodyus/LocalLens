@@ -60,6 +60,11 @@ public:
     std::vector<SearchHit> search(const QStringList& terms, int limit = 50) const;
     /// Terms starting with `prefix`, most widespread first (for autocomplete).
     QStringList suggestTerms(const QString& prefix, int limit = 8) const;
+    /// Indexed paths whose parent directory is exactly `dirPath` (no nested
+    /// subdirectories) — lets a caller diff against what's really on disk to
+    /// catch deletions a non-recursive directory-changed notification can't
+    /// name individually.
+    QStringList documentPathsDirectlyUnder(const QString& dirPath) const;
 
     // ---- Metrics ----
 

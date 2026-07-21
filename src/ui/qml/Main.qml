@@ -19,6 +19,9 @@ ApplicationWindow {
     readonly property color surfaceBorder: "#2a2e3a"
     readonly property color accent: "#4c7dff"
 
+    // Last ~12 query times, for the sparkline tile.
+    property var queryHistory: []
+
     // 1,284 → "1,284" · 12900 → "12.9K" (stat-tile auto-compact values)
     function compact(n) {
         if (n >= 1e6) return (n / 1e6).toFixed(1) + "M"
@@ -26,8 +29,25 @@ ApplicationWindow {
         return Number(n).toLocaleString(Qt.locale(), 'f', 0)
     }
 
+    function selectSuggestion(text) {
+        searchField.text = text
+        suggestionsPopup.close()
+        app.search(text)
+        searchField.forceActiveFocus()
+    }
+
     AppController {
         id: app
+    }
+
+    Connections {
+        target: app
+        function onSearchFinished() {
+            root.queryHistory.push(app.lastQueryMs)
+            if (root.queryHistory.length > 12)
+                root.queryHistory.shift()
+            sparklineCanvas.requestPaint()
+        }
     }
 
     FolderDialog {
@@ -103,13 +123,64 @@ ApplicationWindow {
                     suggestionsPopup.close()
                     app.search(text)
                 }
-                // later: keyboard navigation — Keys.onDownPressed moves
-                // focus into the suggestion list; Esc closes the popup.
+                Keys.onDownPressed: {
+                    if (suggestionsPopup.visible) {
+                        suggestionList.currentIndex = 0
+                        suggestionList.forceActiveFocus()
+                    }
+                }
+                Keys.onEscapePressed: {
+                    if (suggestionsPopup.visible)
+                        suggestionsPopup.close()
+                }
             }
 
             Button {
                 text: "Index folder…"
                 onClicked: folderDialog.open()
+            }
+        }
+
+        // ---- Watched folders ----
+        Flow {
+            Layout.fillWidth: true
+            visible: app.watchedFolders.length > 0
+            spacing: 6
+
+            Repeater {
+                model: app.watchedFolders
+                delegate: Rectangle {
+                    radius: 4
+                    color: root.surface
+                    border.color: root.surfaceBorder
+                    implicitWidth: chipRow.implicitWidth + 16
+                    implicitHeight: chipRow.implicitHeight + 10
+
+                    RowLayout {
+                        id: chipRow
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Label {
+                            text: modelData
+                            color: root.inkSecondary
+                            font.pixelSize: 12
+                            elide: Text.ElideMiddle
+                            Layout.maximumWidth: 260
+                        }
+                        Label {
+                            text: "✕"
+                            color: root.inkMuted
+                            font.pixelSize: 12
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -4 // bigger hit target than the glyph
+                                onClicked: app.removeFolder(modelData)
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -122,7 +193,7 @@ ApplicationWindow {
             spacing: 6
             model: app.results
 
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
 
             delegate: Rectangle {
                 width: ListView.view.width
@@ -154,8 +225,15 @@ ApplicationWindow {
                         font.pixelSize: 12
                         elide: Text.ElideMiddle
                     }
-                    // later: snippet line — needs SnippetRole in
-                    // SearchResultModel (see the note there).
+                    Label {
+                        Layout.fillWidth: true
+                        text: snippet
+                        visible: snippet.length > 0
+                        color: root.inkSecondary
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
                 }
 
                 ColumnLayout {
@@ -180,9 +258,30 @@ ApplicationWindow {
                     }
                 }
 
-                // later: open the file on double-click
-                // (Qt.openUrlExternally("file:///" + path)) and add a
-                // right-click "Reveal in Explorer" menu.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onDoubleClicked: (mouse) => {
+                        if (mouse.button === Qt.LeftButton)
+                            Qt.openUrlExternally("file:///" + path)
+                    }
+                    onClicked: (mouse) => {
+                        if (mouse.button === Qt.RightButton)
+                            resultContextMenu.popup()
+                    }
+                }
+
+                Menu {
+                    id: resultContextMenu
+                    MenuItem {
+                        text: "Open"
+                        onTriggered: Qt.openUrlExternally("file:///" + path)
+                    }
+                    MenuItem {
+                        text: "Reveal in Explorer"
+                        onTriggered: app.revealInExplorer(path)
+                    }
+                }
             }
 
             Label {
@@ -207,9 +306,57 @@ ApplicationWindow {
             MetricTile { label: "Queue"; value: root.compact(app.queueDepth) }
             MetricTile { label: "Last query"; value: app.lastQueryMs.toFixed(2) + " ms" }
 
-            // later: query-latency sparkline tile — keep the last ~12
-            // lastQueryMs values in a JS array (push on app.searchFinished)
-            // and draw them with a Canvas or Shape in the de-emphasis hue.
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: 72
+                radius: 8
+                color: root.surface
+                border.color: root.surfaceBorder
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 2
+
+                    Label {
+                        text: "Query trend"
+                        color: root.inkMuted
+                        font.pixelSize: 12
+                    }
+                    Canvas {
+                        id: sparklineCanvas
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        onPaint: {
+                            const ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            const pts = root.queryHistory
+                            if (pts.length < 2)
+                                return
+                            let minV = Math.min.apply(Math, pts)
+                            let maxV = Math.max.apply(Math, pts)
+                            if (maxV === minV)
+                                maxV = minV + 1
+                            ctx.strokeStyle = root.inkMuted
+                            ctx.lineWidth = 2
+                            ctx.beginPath()
+                            for (let i = 0; i < pts.length; i++) {
+                                const x = width * i / (pts.length - 1)
+                                const y = height - ((pts[i] - minV) / (maxV - minV)) * height
+                                if (i === 0) ctx.moveTo(x, y)
+                                else ctx.lineTo(x, y)
+                            }
+                            ctx.stroke()
+
+                            const lastY = height - ((pts[pts.length - 1] - minV) / (maxV - minV)) * height
+                            ctx.fillStyle = root.accent
+                            ctx.beginPath()
+                            ctx.arc(width, lastY, 3, 0, 2 * Math.PI)
+                            ctx.fill()
+                        }
+                    }
+                }
+            }
         }
 
         // ---- Status line ----
@@ -239,9 +386,28 @@ ApplicationWindow {
             id: suggestionList
             implicitHeight: Math.min(contentHeight, 240)
             clip: true
+            keyNavigationEnabled: true
+            highlightMoveDuration: 0
+
+            Keys.onUpPressed: {
+                if (currentIndex <= 0)
+                    searchField.forceActiveFocus()
+                else
+                    decrementCurrentIndex()
+            }
+            Keys.onDownPressed: incrementCurrentIndex()
+            Keys.onReturnPressed: {
+                if (currentIndex >= 0 && currentIndex < model.length)
+                    root.selectSuggestion(model[currentIndex])
+            }
+            Keys.onEscapePressed: {
+                suggestionsPopup.close()
+                searchField.forceActiveFocus()
+            }
+
             delegate: ItemDelegate {
                 width: ListView.view.width
-                highlighted: hovered
+                highlighted: hovered || ListView.isCurrentItem
 
                 contentItem: Label {
                     text: modelData
@@ -252,11 +418,7 @@ ApplicationWindow {
                     color: highlighted ? root.surfaceBorder : "transparent"
                     radius: 4
                 }
-                onClicked: {
-                    searchField.text = modelData
-                    suggestionsPopup.close()
-                    app.search(modelData)
-                }
+                onClicked: root.selectSuggestion(modelData)
             }
         }
     }

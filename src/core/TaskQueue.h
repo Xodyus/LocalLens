@@ -13,10 +13,11 @@ namespace core {
 /// consumed by the indexer worker thread.
 struct IndexTask {
     enum class Kind {
-        AddOrUpdate, ///< (re)index the file at `path`
-        Remove,      ///< drop the file at `path` from the index
-        RemoveDir,   ///< drop every indexed file under the directory `path`
-        Rescan,      ///< walk the directory `path` and enqueue its files
+        AddOrUpdate,  ///< (re)index the file at `path`
+        Remove,       ///< drop the file at `path` from the index
+        RemoveDir,    ///< drop every indexed file under the directory `path`
+        Rescan,       ///< walk the directory `path` and enqueue its files
+        ReconcileDir, ///< drop indexed direct children of `path` no longer on disk
     };
 
     Kind kind = Kind::AddOrUpdate;

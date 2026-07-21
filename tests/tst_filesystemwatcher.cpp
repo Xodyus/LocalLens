@@ -57,6 +57,50 @@ private slots:
         QVERIFY(task->kind == IndexTask::Kind::Rescan);
         QCOMPARE(task->path, dir.filePath("nested"));
     }
+
+    void directoryChangeAlsoEnqueuesReconcileDir() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        TaskQueue queue;
+        FilesystemWatcher fsw(&queue);
+        fsw.watchTree(dir.path());
+
+        QFile file(dir.filePath("fresh.txt"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("hello watcher");
+        file.close();
+
+        QTRY_VERIFY_WITH_TIMEOUT(queue.size() >= 2, 5000);
+        bool sawRescan = false;
+        bool sawReconcile = false;
+        while (queue.size() > 0) {
+            const auto task = queue.pop();
+            sawRescan |= task->kind == IndexTask::Kind::Rescan;
+            sawReconcile |= task->kind == IndexTask::Kind::ReconcileDir;
+        }
+        QVERIFY(sawRescan);
+        QVERIFY(sawReconcile);
+    }
+
+    void unwatchTreeStopsFurtherEvents() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        TaskQueue queue;
+        FilesystemWatcher fsw(&queue);
+        fsw.watchTree(dir.path());
+        fsw.unwatchTree(dir.path());
+
+        QFile file(dir.filePath("later.txt"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("should not be observed");
+        file.close();
+
+        // Give a (now-removed) watch a chance to misfire before asserting it didn't.
+        QTest::qWait(300);
+        QCOMPARE(queue.size(), 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(FilesystemWatcherTest)

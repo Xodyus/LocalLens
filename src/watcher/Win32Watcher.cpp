@@ -54,6 +54,14 @@ void Win32Watcher::watchTree(const QString& rootDir) {
     SetEvent(static_cast<HANDLE>(m_wakeEvent));
 }
 
+void Win32Watcher::unwatchTree(const QString& rootDir) {
+    {
+        QMutexLocker lock(&m_pendingMutex);
+        m_pendingRemovals.push_back(rootDir);
+    }
+    SetEvent(static_cast<HANDLE>(m_wakeEvent));
+}
+
 void Win32Watcher::reissueRead(Watch& watch) {
     ResetEvent(watch.overlapped.hEvent);
     DWORD unused = 0;
@@ -76,6 +84,19 @@ void Win32Watcher::openWatch(const QString& rootDir) {
     watch->overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     reissueRead(*watch);
     m_watches.push_back(watch);
+}
+
+void Win32Watcher::closeWatch(const QString& rootDir) {
+    for (int i = 0; i < m_watches.size(); ++i) {
+        if (m_watches[i]->rootDir != rootDir)
+            continue;
+        CancelIo(m_watches[i]->directoryHandle);
+        CloseHandle(m_watches[i]->overlapped.hEvent);
+        CloseHandle(m_watches[i]->directoryHandle);
+        delete m_watches[i];
+        m_watches.remove(i);
+        return;
+    }
 }
 
 void Win32Watcher::processEvents(Watch& watch) {
@@ -140,12 +161,16 @@ void Win32Watcher::run() {
         if (result == WAIT_OBJECT_0 + 1) {
             ResetEvent(static_cast<HANDLE>(m_wakeEvent));
             QVector<QString> roots;
+            QVector<QString> removals;
             {
                 QMutexLocker lock(&m_pendingMutex);
                 roots.swap(m_pendingRoots);
+                removals.swap(m_pendingRemovals);
             }
             for (const QString& root : roots)
                 openWatch(root);
+            for (const QString& root : removals)
+                closeWatch(root);
             continue;
         }
 

@@ -32,6 +32,9 @@ public:
     /// Starts watching `rootDir` and every subdirectory beneath it.
     void watchTree(const QString& rootDir);
 
+    /// Stops watching `rootDir` and everything beneath it.
+    void unwatchTree(const QString& rootDir);
+
 private:
     void onDirectoryChanged(const QString& dir);
     void addDirectory(const QString& dir);

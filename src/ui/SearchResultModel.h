@@ -21,8 +21,7 @@ public:
         FileNameRole,
         ScoreRole,
         MatchedTermsRole,
-        // later: SnippetRole — re-read the hit's file and return a short
-        // excerpt around the first query-term match (highlighted in the view).
+        SnippetRole,
     };
 
     explicit SearchResultModel(QObject* parent = nullptr) : QAbstractListModel(parent) {}
@@ -32,10 +31,12 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     /// Replaces the whole result set (a new query supersedes the old one).
-    void setHits(std::vector<db::SearchHit> hits);
+    /// `snippets` must be the same size as `hits`, aligned by index.
+    void setHits(std::vector<db::SearchHit> hits, QStringList snippets);
 
 private:
     std::vector<db::SearchHit> m_hits;
+    QStringList m_snippets;
 };
 
 } // namespace ui

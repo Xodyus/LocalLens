@@ -89,6 +89,24 @@ private slots:
         const QStringList paths = drainPaths(queue);
         QVERIFY(paths.contains(filePath));
     }
+
+    void unwatchTreeStopsFurtherEvents() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+
+        TaskQueue queue;
+        Win32Watcher watcher(&queue);
+        watcher.start();
+        watcher.watchTree(dir.path());
+        QTest::qWait(200);
+
+        watcher.unwatchTree(dir.path());
+        QTest::qWait(200); // let the removal actually process
+
+        writeFile(dir.filePath("later.txt"), "should not be observed");
+        QTest::qWait(300);
+        QCOMPARE(queue.size(), 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(Win32WatcherTest)

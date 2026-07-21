@@ -166,6 +166,19 @@ bool IndexStore::upsertDocument(const QString& path, qint64 mtimeMs, qint64 size
     // finish() resets the RETURNING statement now that its row is consumed.
     upsert.finish();
 
+    // Remember which terms this document used before re-indexing, so we can
+    // tell afterward which of them lost their last posting (see below).
+    std::vector<qint64> oldTermIds;
+    {
+        QSqlQuery oldTerms(database);
+        oldTerms.prepare("SELECT term_id FROM postings WHERE doc_id = ?");
+        oldTerms.addBindValue(docId);
+        if (oldTerms.exec()) {
+            while (oldTerms.next())
+                oldTermIds.push_back(oldTerms.value(0).toLongLong());
+        }
+    }
+
     // Re-indexing replaces the document's postings wholesale.
     QSqlQuery clear(database);
     clear.prepare("DELETE FROM postings WHERE doc_id = ?");
@@ -189,6 +202,34 @@ bool IndexStore::upsertDocument(const QString& path, qint64 mtimeMs, qint64 size
         if (!insertPosting.exec()) {
             m_lastError = insertPosting.lastError().text();
             return false;
+        }
+    }
+
+    // A term this document dropped (edited out, or the doc changed entirely)
+    // may now have zero postings anywhere. Checked per-term rather than the
+    // full-table sweep pruneOrphanTerms() does, since this runs on every
+    // re-index — bounded by this document's own old vocabulary, not the
+    // whole database.
+    if (!oldTermIds.empty()) {
+        QSqlQuery stillUsed(database);
+        stillUsed.prepare("SELECT 1 FROM postings WHERE term_id = ? LIMIT 1");
+        QSqlQuery deleteTerm(database);
+        deleteTerm.prepare("DELETE FROM terms WHERE id = ?");
+        for (const qint64 oldId : oldTermIds) {
+            stillUsed.bindValue(0, oldId);
+            if (!stillUsed.exec()) {
+                m_lastError = stillUsed.lastError().text();
+                return false;
+            }
+            const bool orphaned = !stillUsed.next();
+            stillUsed.finish();
+            if (orphaned) {
+                deleteTerm.bindValue(0, oldId);
+                if (!deleteTerm.exec()) {
+                    m_lastError = deleteTerm.lastError().text();
+                    return false;
+                }
+            }
         }
     }
 
@@ -394,6 +435,28 @@ QStringList IndexStore::suggestTerms(const QString& prefix, int limit) const {
             suggestions.append(query.value(0).toString());
     }
     return suggestions;
+}
+
+QStringList IndexStore::documentPathsDirectlyUnder(const QString& dirPath) const {
+    QString prefix = QDir::fromNativeSeparators(dirPath);
+    if (!prefix.endsWith('/'))
+        prefix += '/';
+    QString escaped = prefix;
+    escaped.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+
+    QStringList paths;
+    QSqlQuery query(connection());
+    // Excluding a second '/' after the prefix keeps this to direct children —
+    // exactly what one non-recursive directory-changed notification covers.
+    query.prepare("SELECT path FROM documents WHERE path LIKE ? ESCAPE '\\' "
+                 "AND path NOT LIKE ? ESCAPE '\\'");
+    query.addBindValue(escaped + '%');
+    query.addBindValue(escaped + "%/%");
+    if (query.exec()) {
+        while (query.next())
+            paths.append(query.value(0).toString());
+    }
+    return paths;
 }
 
 qint64 IndexStore::documentCount() const {

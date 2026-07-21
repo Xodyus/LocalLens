@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QSet>
 
 #include "core/TextExtractor.h"
 #include "core/Tokenizer.h"
@@ -75,6 +76,22 @@ void IndexerWorker::run() {
         case IndexTask::Kind::RemoveDir:
             changed = store.removeDocumentsUnder(task->path);
             break;
+        case IndexTask::Kind::ReconcileDir: {
+            // A non-recursive directory-changed notification (the portable
+            // watcher's signal) can't name which file was removed — only
+            // that *something* in this directory changed. Diff what's
+            // indexed against what's actually there to catch deletions.
+            const QStringList indexed = store.documentPathsDirectlyUnder(task->path);
+            const QStringList onDiskNames = QDir(task->path).entryList(QDir::Files);
+            QSet<QString> onDisk;
+            for (const QString& name : onDiskNames)
+                onDisk.insert(task->path + '/' + name);
+            for (const QString& indexedPath : indexed) {
+                if (!onDisk.contains(indexedPath))
+                    changed = store.removeDocument(indexedPath) || changed;
+            }
+            break;
+        }
         }
         if (changed)
             emit indexChanged();

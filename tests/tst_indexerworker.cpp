@@ -85,6 +85,35 @@ private slots:
         queue.stop();
         QVERIFY(worker.wait(5000));
     }
+
+    void reconcileDirRemovesFilesDeletedOutsideTheQueue() {
+        const QString dbPath = m_dir.filePath("worker4.db");
+        const QString root = m_dir.filePath("reconcile");
+        QVERIFY(QDir().mkpath(root));
+        writeFile(root + "/keep.txt", "keep this content");
+        writeFile(root + "/drop.txt", "drop this content");
+
+        TaskQueue queue;
+        IndexerWorker worker(dbPath, &queue, "worker-conn-4");
+        worker.start();
+        queue.push({IndexTask::Kind::Rescan, root});
+
+        db::IndexStore reader(dbPath, "reader-conn-4");
+        QVERIFY2(reader.open(), qPrintable(reader.lastError()));
+        QTRY_COMPARE_WITH_TIMEOUT(reader.documentCount(), qint64(2), 5000);
+
+        // A plain delete never goes through the queue — this simulates what
+        // the portable watcher sees: "something in this directory changed",
+        // with no way to name which file. ReconcileDir must diff and drop it.
+        QVERIFY(QFile::remove(root + "/drop.txt"));
+        queue.push({IndexTask::Kind::ReconcileDir, root});
+
+        QTRY_COMPARE_WITH_TIMEOUT(reader.documentCount(), qint64(1), 5000);
+        QCOMPARE(reader.search({"keep"}).size(), size_t(1));
+
+        queue.stop();
+        QVERIFY(worker.wait(5000));
+    }
 };
 
 QTEST_GUILESS_MAIN(IndexerWorkerTest)

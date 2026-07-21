@@ -50,11 +50,15 @@ public:
     /// Starts watching `rootDir` and everything beneath it.
     void watchTree(const QString& rootDir);
 
+    /// Stops watching `rootDir`.
+    void unwatchTree(const QString& rootDir);
+
 private:
     struct Watch;
 
     void run();
     void openWatch(const QString& rootDir);
+    void closeWatch(const QString& rootDir);
     void reissueRead(Watch& watch);
     void processEvents(Watch& watch);
 
@@ -65,6 +69,7 @@ private:
 
     QMutex m_pendingMutex;
     QVector<QString> m_pendingRoots;
+    QVector<QString> m_pendingRemovals;
 
     QVector<Watch*> m_watches; // touched only on the run() thread
 };

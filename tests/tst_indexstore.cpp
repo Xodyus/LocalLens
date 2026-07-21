@@ -137,6 +137,29 @@ private slots:
         QCOMPARE(m_store->termCount(), 3);
     }
 
+    void reindexingPrunesOrphanedTerms() {
+        indexText("/note.txt", "alpha beta gamma");
+        QCOMPARE(m_store->termCount(), 3);
+
+        indexText("/note.txt", "beta gamma delta"); // "alpha" now used nowhere
+        QCOMPARE(m_store->termCount(), 3); // beta, gamma, delta (alpha pruned)
+        QVERIFY(m_store->search({"alpha"}).empty());
+    }
+
+    void documentPathsDirectlyUnderReturnsOnlyDirectChildren() {
+        indexText("/watched/a.txt", "one");
+        indexText("/watched/b.txt", "two");
+        indexText("/watched/sub/c.txt", "three");
+        indexText("/other/d.txt", "four");
+
+        const QStringList direct = m_store->documentPathsDirectlyUnder("/watched");
+        QCOMPARE(direct.size(), 2);
+        QVERIFY(direct.contains("/watched/a.txt"));
+        QVERIFY(direct.contains("/watched/b.txt"));
+        QVERIFY(!direct.contains("/watched/sub/c.txt"));
+        QVERIFY(!direct.contains("/other/d.txt"));
+    }
+
     void removeDocumentsUnderAcceptsNativeSeparators() {
         indexText("C:/docs/a.txt", "sunflower field");
         indexText("C:/keep/b.txt", "sunflower oil");
